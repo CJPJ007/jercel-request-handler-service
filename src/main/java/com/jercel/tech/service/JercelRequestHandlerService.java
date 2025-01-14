@@ -17,6 +17,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 @Service
 @Slf4j
@@ -24,6 +25,7 @@ public class JercelRequestHandlerService {
      private final Tika tika;
     private final JedisPool jedisPool;
     private final Storage storage;
+    private final CloudflareR2Client cloudflareR2Client;
 
 
     @Value("${redis.cache.ttl}")
@@ -31,10 +33,11 @@ public class JercelRequestHandlerService {
 
     @Value("${bucket.name}")
     private String BUCKET_NAME;
-    public JercelRequestHandlerService(@Value("${redis.host.name}") String redisHostName, @Value("${redis.port}") int redisPort){
+    public JercelRequestHandlerService(@Value("${redis.host.name}") String redisHostName, @Value("${redis.port}") int redisPort,CloudflareR2Client cloudflareR2Client){
         tika = new Tika();
         jedisPool = new JedisPool(redisHostName, redisPort);
         storage = StorageOptions.getDefaultInstance().getService();
+        this.cloudflareR2Client = cloudflareR2Client;
     }
 
     public ResponseEntity<byte[]> serveFiles(String fileName, HttpServletRequest httpRequest) {
@@ -54,8 +57,8 @@ public class JercelRequestHandlerService {
 
             log.info("Cache miss: Fetching " + fileName + " from GCS.");
             // Fetch the file content from GCS
-            byte[] gcsContent = fetchFileFromGCS(fileName);
-
+            // byte[] gcsContent = fetchFileFromGCS(fileName);
+            byte[] gcsContent = fetchFile(fileName);
             // Store the file in Redis with a TTL
             jedis.setex(redisKey.getBytes(), REDIS_CACHE_TTL, gcsContent);
             System.out.println("Cached " + fileName + " in Redis.");
@@ -74,6 +77,10 @@ public class JercelRequestHandlerService {
             throw new RuntimeException("File not found in GCS: " + fileName);
         }
         return blob.getContent();
+    }
+
+    private byte[] fetchFile(String fileName) throws IOException{
+        return cloudflareR2Client.downloadFile(fileName);
     }
 
     private ResponseEntity<byte[]> createResponseEntity(String fileName, byte[] content) throws IOException {
